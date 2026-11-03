@@ -357,8 +357,8 @@ def grade_json_schema(g: Dict[str, Any], work: Path, base: Path) -> Dict[str, An
     if isinstance(schema, str):
         schema = json.loads((base / schema).read_text(encoding="utf-8"))
     try:
-        import jsonschema  # type: ignore
-        cls = jsonschema.validators.validator_for(schema)  # works across jsonschema versions
+        from jsonschema.validators import validator_for  # type: ignore
+        cls = validator_for(schema)  # picks the right draft; works across jsonschema versions
         errs = [e.message for e in cls(schema).iter_errors(inst)]
     except ImportError:
         errs = _mini_schema_errors(inst, schema)
@@ -714,7 +714,7 @@ def build_claude_cmd(ctx: Dict[str, Any], test: Dict[str, Any]) -> List[str]:
     return cmd
 
 
-def classify(rc: Optional[int], s: Dict[str, Any], timed_out: bool) -> str:
+def classify(s: Dict[str, Any], timed_out: bool) -> str:
     if timed_out:
         return "timeout"
     r = s["result"]
@@ -725,7 +725,7 @@ def classify(rc: Optional[int], s: Dict[str, Any], timed_out: bool) -> str:
     return "ok"
 
 
-async def run_one_trial(ctx: Dict[str, Any], test: Dict[str, Any], idx: int, attempt: int) -> Dict[str, Any]:
+async def run_one_trial(ctx: Dict[str, Any], test: Dict[str, Any], idx: int) -> Dict[str, Any]:
     run_dir: Path = ctx["run_dir"]
     trial_dir = run_dir / "trials" / safe_name(test["id"]) / str(idx)
     if trial_dir.exists():
@@ -766,7 +766,7 @@ async def run_one_trial(ctx: Dict[str, Any], test: Dict[str, Any], idx: int, att
             s["metrics"]["duration_ms"] = wall_ms
         (trial_dir / "final_output.txt").write_text(s["final_text"], encoding="utf-8")
         core.write_json(trial_dir / "summary.json", s)
-        state = classify(proc.returncode, s, timed_out)
+        state = classify(s, timed_out)
         if state == "error":
             reason = "api_error_status=%s" % (s["result"] or {}).get("api_error_status") if s["result"] else \
                 "no result event (exit %s): %s" % (proc.returncode, err.decode("utf-8", "replace")[-400:])
@@ -841,7 +841,7 @@ def resolve_skills(paths: List[str], base: Path) -> List[Dict[str, Any]]:
     return out
 
 
-def make_skills_for(ctx: Dict[str, Any], suite: Dict[str, Any]):
+def make_skills_for(ctx: Dict[str, Any]):
     under_test: List[Dict[str, Any]] = ctx["skills"]
     distractors: List[Dict[str, Any]] = ctx["distractors"]
     by_name = {s["name"]: s for s in under_test + distractors}
@@ -907,8 +907,7 @@ def summarize_results(manifest: Dict[str, Any], records: List[Dict[str, Any]],
     }
 
 
-async def orchestrate(ctx: Dict[str, Any], tests: List[Dict[str, Any]], elog: EventLog,
-                      manifest: Dict[str, Any]) -> str:
+async def orchestrate(ctx: Dict[str, Any], tests: List[Dict[str, Any]], elog: EventLog) -> str:
     done = {(r["test_id"], r["trial"]) for r in elog.records
             if r.get("type") == "trial_finished" and r["status"] != "error"}
     spent = sum(float((r.get("metrics") or {}).get("cost_usd") or 0) + float(r.get("judge_cost_usd") or 0)
@@ -925,8 +924,9 @@ async def orchestrate(ctx: Dict[str, Any], tests: List[Dict[str, Any]], elog: Ev
             if state["aborted"]:
                 return
             res: Dict[str, Any] = {}
+            attempt = 0
             for attempt in range(ctx["retries"] + 1):
-                res = await run_one_trial(ctx, t, i, attempt)
+                res = await run_one_trial(ctx, t, i)
                 if res["status"] != "error":
                     break
                 wait = min(60.0, (2 ** attempt) * 2) * (0.5 + random.random())
@@ -978,13 +978,13 @@ def print_summary(results: Dict[str, Any]) -> None:
 
 
 def cmd_run(a: argparse.Namespace, resume_dir: Optional[Path] = None) -> int:
+    manifest: Dict[str, Any] = {}
     if resume_dir:
         manifest = core.load_json(resume_dir / "manifest.json")
         override_cap = getattr(a, "max_run_usd", None)
         a = argparse.Namespace(**manifest["config"]["argv"])
         if override_cap is not None:
             a.max_run_usd = override_cap
-        run_dir = resume_dir
     suite = core.load_suite(Path(a.suite))
     errs = core.validate_suite(suite)
     if errs:
@@ -1033,7 +1033,7 @@ def cmd_run(a: argparse.Namespace, resume_dir: Optional[Path] = None) -> int:
             log("--clean-config needs ANTHROPIC_API_KEY (a fresh config dir has no OAuth login)")
             return 2
         config_dir = tempfile.mkdtemp(prefix="skillcheck-config-")
-    if not resume_dir:
+    if resume_dir is None:
         run_id = a.run_id or dt.datetime.now().strftime("%Y%m%d-%H%M%S-") + uuid.uuid4().hex[:6]
         run_dir = Path(a.out).expanduser().resolve() / run_id
         run_dir.mkdir(parents=True, exist_ok=False)
@@ -1061,6 +1061,8 @@ def cmd_run(a: argparse.Namespace, resume_dir: Optional[Path] = None) -> int:
         argv["skill"] = [str(Path(x).expanduser().resolve()) for x in a.skill] if a.skill else None
         argv["distractor"] = [str(Path(x).expanduser().resolve()) for x in a.distractor] if a.distractor else None
         core.write_json(run_dir / "manifest.json", manifest)
+    else:
+        run_dir = resume_dir
     elog = EventLog(run_dir / "events.jsonl")
     if not elog.records:
         elog.append({"type": "run_started", "manifest_sha256": core.sha256_file(run_dir / "manifest.json")})
@@ -1076,13 +1078,13 @@ def cmd_run(a: argparse.Namespace, resume_dir: Optional[Path] = None) -> int:
         "grader_image": a.grader_image, "bare": a.bare, "extra_args": a.extra_arg or [],
         "config_dir": config_dir,
     }
-    ctx["skills_for"] = make_skills_for(ctx, suite)
+    ctx["skills_for"] = make_skills_for(ctx)
     log("run %s: %d tests, %d trials -> %s" % (manifest["run_id"], len(tests), n_trials, run_dir))
     if a.grader_sandbox == "none" and any(g.get("type") in ("python", "command")
                                           for t in tests for g in t.get("graders") or []):
         log("note: python/command graders run on this machine (use --grader-sandbox docker to isolate)")
     try:
-        status = asyncio.run(orchestrate(ctx, tests, elog, manifest))
+        status = asyncio.run(orchestrate(ctx, tests, elog))
     except KeyboardInterrupt:
         status = "interrupted"
         log("interrupted; resume with: run_suite.py resume %s" % run_dir)
