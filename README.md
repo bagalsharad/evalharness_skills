@@ -30,13 +30,6 @@ git clone <this repo> skillcheck && cd skillcheck
 ./install.sh --project ~/my-repo  # project: ~/my-repo/.claude/skills, commit it to share with your team
 ```
 
-Or install it as a Claude Code plugin from this folder (skills are then namespaced `skillcheck:…`):
-
-```
-/plugin marketplace add /path/to/skillcheck
-/plugin install skillcheck@skillcheck-marketplace
-```
-
 Prerequisites: Claude Code (`claude` on PATH, or set `SKILLCHECK_CLAUDE_BIN`), Python 3.9+, and optionally
 PyYAML and Docker. Check them with:
 

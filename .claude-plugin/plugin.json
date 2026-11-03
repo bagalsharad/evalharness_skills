@@ -1,8 +1,0 @@
-{
-  "name": "skillcheck",
-  "version": "0.1.0",
-  "description": "Regression testing for Agent Skills: lint, test suites, trial runs in Claude Code headless mode, and statistically sound verdicts, CI gates and drift alerts.",
-  "author": {"name": "skillcheck contributors"},
-  "license": "Apache-2.0",
-  "keywords": ["skills", "evals", "testing", "regression", "statistics", "ci"]
-}

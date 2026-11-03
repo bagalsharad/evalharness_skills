@@ -7,7 +7,7 @@ This page records the decisions made, the assumptions behind them, and what from
 
 | # | Decision | Why | Revisit when |
 |---|---|---|---|
-| 001 | Ship as **Claude Code skills** (plus an optional plugin manifest), not a pip package | The request was for skills people run locally; skills install by copying a folder and Claude can drive the workflow | a hosted or team service is needed |
+| 001 | Ship as **Claude Code skills** installed by `install.sh`, not a pip package | The request was for skills people run locally; skills install by copying a folder and Claude can drive the workflow | a hosted or team service is needed |
 | 002 | **Stdlib-only Python 3.9+**, PyYAML optional (PEP 723 headers for `uv run`) | Works on stock macOS and Linux Python; no dependency install step | statsmodels or Pydantic is worth the install cost |
 | 003 | **Vendored core library**: `core/skillcheck_core.py` is copied into each skill by `tools/sync_core.py`; a test enforces identical copies | Each skill must work on its own after install; skills cannot import from each other | Claude Code offers shared skill libraries |
 | 004 | **Runtime = Claude Code headless** (`claude -p --output-format stream-json`), one subprocess per trial | It is the real skills runtime, and trace format verified against 2.1.224/2.1.316 | other runtimes (Agent SDK, other agents) need adapters |
