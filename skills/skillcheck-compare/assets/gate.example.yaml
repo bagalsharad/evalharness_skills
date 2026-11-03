@@ -1,0 +1,16 @@
+# skillcheck gate policy (analyze.py gate BASE CAND --policy gate.yaml)
+alpha: 0.05                      # false-discovery rate per family (critical | gated | informational)
+min_effect: 0.2                  # per-test change (pass-rate points) you care about
+suite_min_effect: 0.1            # suite-level change you care about
+power: 0.8
+critical_tests: []               # ids gated individually, in addition to tests with `critical: true`
+block_on_suite_regression: true
+block_on_critical_regression: true
+block_on_any_regression: false   # true = any test regression blocks (more false alarms with many tests)
+inconclusive: warn               # warn | block, for the suite and for critical tests
+max_cost_increase_pct: null      # e.g. 50 blocks a >50% rise in cost per trial
+allow_uncalibrated_judges: false # llm_rubric tests gate only after calibrate-judge
+include_unreviewed: false        # generated tests gate only after a human sets reviewed: true
+include_quarantined: false
+min_trials: 5                    # warn when a critical test has fewer
+max_error_rate: 0.2              # block when >20% of candidate trials hit infrastructure errors

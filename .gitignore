@@ -1,0 +1,10 @@
+# local run data
+.skillcheck/
+__pycache__/
+*.pyc
+.DS_Store
+
+# local editor/assistant files and private notes (not part of the project)
+/CLAUDE.md
+/.claude/
+/skillcheck Master Build Prompt.md

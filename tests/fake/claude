@@ -1,0 +1,59 @@
+#!/usr/bin/env python3
+"""Fake `claude` CLI for offline tests. Emits Claude Code-style stream-json.
+
+Behaviour (env vars):
+  FAKE_TRIGGER_RATE  prob. a matching skill is loaded (default 1.0)
+  FAKE_PASS_RATE     prob. the requested file is written correctly (default 1.0)
+  FAKE_INFRA_ERROR   prob. the process dies with no result event (default 0)
+  FAKE_JUDGE_SCORE   score returned in judge mode (default 0.9)
+  FAKE_MODEL         model id reported (default fake-model-20250101)
+A skill "matches" when its folder name (hyphens as spaces) or the first word of it
+appears in the prompt. Files: 'to <path>' in the prompt is written with 'ok'.
+"""
+import json, os, random, re, sys
+from pathlib import Path
+
+args = sys.argv[1:]
+if "--version" in args:
+    print("9.9.9 (Fake Claude)"); sys.exit(0)
+def opt(name, default=None):
+    return args[args.index(name) + 1] if name in args else default
+prompt = opt("-p", "")
+fmt = opt("--output-format", "text")
+model = os.environ.get("FAKE_MODEL", "fake-model-20250101")
+rng = random.Random()
+if "--json-schema" in args:
+    score = float(os.environ.get("FAKE_JUDGE_SCORE", "0.9"))
+    print(json.dumps({"type": "result", "subtype": "success", "result": "{}", "total_cost_usd": 0.001,
+                      "structured_output": {"reasoning": "fake judge", "score": score}}))
+    sys.exit(0)
+if fmt == "json":
+    print(json.dumps({"type": "result", "subtype": "success", "result": "ok", "total_cost_usd": 0.0001}))
+    sys.exit(0)
+def emit(e): print(json.dumps(e), flush=True)
+skills_dir = Path(".claude/skills")
+installed = sorted(p.name for p in skills_dir.iterdir()) if skills_dir.exists() else []
+emit({"type": "system", "subtype": "init", "skills": installed + ["builtin-helper"], "tools": ["Bash", "Read", "Write", "Skill"],
+      "model": model, "claude_code_version": "9.9.9", "permissionMode": "acceptEdits"})
+if rng.random() < float(os.environ.get("FAKE_INFRA_ERROR", "0")):
+    sys.stderr.write("simulated crash\n"); sys.exit(1)
+low = prompt.lower()
+hit = None
+for name in installed:
+    if name.replace("-", " ") in low or name.split("-")[0] in low:
+        hit = name; break
+calls = 0
+if hit and rng.random() < float(os.environ.get("FAKE_TRIGGER_RATE", "1.0")):
+    calls += 1
+    emit({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "t%d" % calls, "name": "Skill", "input": {"skill": hit}}]}, "parent_tool_use_id": None})
+    emit({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "t1", "content": "Launching skill"}]}})
+m = re.search(r"\bto ([\w./-]+\.\w+)", prompt)
+if m and rng.random() < float(os.environ.get("FAKE_PASS_RATE", "1.0")):
+    calls += 1
+    path = Path(m.group(1)); path.parent.mkdir(parents=True, exist_ok=True); path.write_text("ok\n")
+    emit({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "t%d" % calls, "name": "Write", "input": {"file_path": str(path.resolve()), "content": "ok\n"}}]}, "parent_tool_use_id": None})
+text = "done" if calls else "I can't help with that."
+emit({"type": "assistant", "message": {"content": [{"type": "text", "text": text}]}, "parent_tool_use_id": None})
+emit({"type": "result", "subtype": "success", "is_error": False, "duration_ms": 1200, "num_turns": calls + 1,
+      "total_cost_usd": 0.01, "usage": {"input_tokens": 100, "output_tokens": 20, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0},
+      "result": text, "permission_denials": [], "terminal_reason": "completed", "api_error_status": None})

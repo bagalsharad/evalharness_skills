@@ -1,0 +1,48 @@
+# Example 3: multi-skill interaction. Each test installs all three skills and checks
+# that exactly the right one is picked (or none).
+spec_version: 1
+suite: poetry-and-data-interaction
+description: Selection accuracy when similar skills compete
+skills:
+  - ../../skills/haiku-poet
+distractors:
+  - ../../skills/limerick-writer
+  - ../../skills/csv-summary
+defaults:
+  trials: 5
+  timeout_s: 180
+  allow_tools: ["Bash(python3 *)"]
+tests:
+  - id: picks-haiku
+    kind: interaction
+    expect_skill: haiku-poet
+    prompt: Write a haiku about snow.
+  - id: picks-haiku-ambiguous
+    kind: interaction
+    expect_skill: haiku-poet
+    critical: true
+    prompt: Write a short three-line poem about frogs.
+  - id: picks-limerick
+    kind: interaction
+    expect_skill: limerick-writer
+    prompt: I need a silly limerick about a cat who codes.
+  - id: picks-csv
+    kind: interaction
+    expect_skill: csv-summary
+    prompt: Describe the columns in sales.csv.
+    fixtures: [../csv-summary/fixtures/sales.csv]
+  - id: picks-none
+    kind: interaction
+    expect_skill: null
+    prompt: Translate "good morning" into French.
+  # Regression check for haiku-poet behaviour while competitors are installed.
+  - id: haiku-behaviour-with-competitors
+    kind: behavior
+    skills: [haiku-poet, limerick-writer, csv-summary]
+    prompt: Write a haiku about autumn and save it to haiku.txt
+    graders:
+      - type: trace
+        must_load_skill: haiku-poet
+        must_not_load_skill: limerick-writer
+      - type: python
+        entrypoint: ../haiku-poet/graders/check_haiku.py

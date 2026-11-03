@@ -1,0 +1,109 @@
+# GitHub Actions: skillcheck PR gate + nightly drift canary.
+# Copy to .github/workflows/skillcheck.yml and edit the env block.
+# Needs the repo secret ANTHROPIC_API_KEY (use a key scoped to CI with a spend limit).
+name: skillcheck
+on:
+  pull_request:
+    paths: ["skills/**", "skillcheck-tests/**"]
+  schedule:
+    - cron: "17 3 * * *"          # nightly drift canary
+  workflow_dispatch:
+
+env:
+  SKILL_PATH: skills/my-skill                       # skill under test, relative to repo root
+  SUITE: skillcheck-tests/my-skill/suite.yaml
+  PINNED_MODEL: claude-sonnet-4-5-20250929          # control: a dated snapshot
+  CANARY_MODEL: sonnet                              # canary: floating alias
+  SKILLCHECK_REPO: https://github.com/YOUR-ORG/skillcheck-skills   # where you host this skill pack
+  TRIALS: "10"
+  MAX_RUN_USD: "15"
+
+jobs:
+  gate:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions: {contents: read, pull-requests: write}
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+        with: {fetch-depth: 0}
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - name: Install Claude Code and skillcheck
+        run: |
+          curl -fsSL https://claude.ai/install.sh | bash
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          pip install pyyaml
+          git clone --depth 1 "$SKILLCHECK_REPO" /tmp/skillcheck
+      - name: Base-branch skill run
+        run: |
+          git worktree add /tmp/base "origin/${{ github.base_ref }}"
+          python3 /tmp/skillcheck/skills/skillcheck-run/scripts/run_suite.py run "$SUITE" \
+            --skill "/tmp/base/$SKILL_PATH" --model "$PINNED_MODEL" --trials "$TRIALS" \
+            --max-run-usd "$MAX_RUN_USD" --clean-config --run-id base --quiet
+      - name: PR skill run
+        run: |
+          python3 /tmp/skillcheck/skills/skillcheck-run/scripts/run_suite.py run "$SUITE" \
+            --skill "$SKILL_PATH" --model "$PINNED_MODEL" --trials "$TRIALS" \
+            --max-run-usd "$MAX_RUN_USD" --clean-config --run-id cand --quiet
+      - name: Gate
+        id: gate
+        run: |
+          set +e
+          python3 /tmp/skillcheck/skills/skillcheck-compare/scripts/analyze.py gate \
+            .skillcheck/runs/base .skillcheck/runs/cand --policy skillcheck-tests/gate.yaml \
+            --md pr-comment.md --out comparison.json
+          echo "exit=$?" >> "$GITHUB_OUTPUT"
+          python3 /tmp/skillcheck/skills/skillcheck-compare/scripts/report.py .skillcheck/runs/cand \
+            --compare comparison.json --html report.html --junit junit.xml
+      - name: Comment on PR
+        env: {GH_TOKEN: "${{ github.token }}"}
+        run: gh pr comment ${{ github.event.pull_request.number }} --body-file pr-comment.md --edit-last || gh pr comment ${{ github.event.pull_request.number }} --body-file pr-comment.md
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: {name: skillcheck, path: "report.html\njunit.xml\ncomparison.json\n.skillcheck/runs"}
+      - name: Fail when the gate blocks
+        if: steps.gate.outputs.exit != '0'
+        run: exit 1
+
+  drift:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      SKILLCHECK_WEBHOOK: ${{ secrets.SKILLCHECK_WEBHOOK }}   # Slack incoming webhook or any JSON endpoint
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - name: Install
+        run: |
+          curl -fsSL https://claude.ai/install.sh | bash
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          pip install pyyaml
+          git clone --depth 1 "$SKILLCHECK_REPO" /tmp/skillcheck
+      - name: Restore alert state
+        uses: actions/cache/restore@v4
+        with: {path: .skillcheck/drift, key: "skillcheck-drift-${{ github.run_id }}", restore-keys: "skillcheck-drift-"}
+      - name: Control (pinned) and canary (alias) runs
+        run: |
+          for arm in control:$PINNED_MODEL canary:$CANARY_MODEL; do
+            python3 /tmp/skillcheck/skills/skillcheck-run/scripts/run_suite.py run "$SUITE" --skill "$SKILL_PATH" \
+              --model "${arm#*:}" --trials "$TRIALS" --max-run-usd "$MAX_RUN_USD" --clean-config \
+              --run-id "${arm%%:*}" --quiet
+          done
+      - name: Drift check (alerts only on new, statistically supported changes)
+        run: |
+          python3 /tmp/skillcheck/skills/skillcheck-compare/scripts/analyze.py drift \
+            .skillcheck/runs/control .skillcheck/runs/canary --md drift.md || echo "new drift alerts"
+          cat drift.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Save alert state
+        if: always()
+        uses: actions/cache/save@v4
+        with: {path: .skillcheck/drift, key: "skillcheck-drift-${{ github.run_id }}"}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: {name: skillcheck-drift, path: ".skillcheck/runs\ndrift.md"}

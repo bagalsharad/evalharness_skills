@@ -1,0 +1,140 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/skillcheck/skillcheck/schemas/suite-v1.json",
+  "title": "skillcheck suite, spec_version 1",
+  "type": "object",
+  "required": ["spec_version", "suite", "tests"],
+  "additionalProperties": false,
+  "properties": {
+    "spec_version": {"const": 1},
+    "suite": {"type": "string", "minLength": 1},
+    "description": {"type": "string"},
+    "extends": {"type": "string"},
+    "skills": {"type": "array", "items": {"type": "string"}},
+    "distractors": {"type": "array", "items": {"type": "string"}},
+    "defaults": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "trials": {"type": "integer", "minimum": 1},
+        "timeout_s": {"type": "number", "exclusiveMinimum": 0},
+        "max_turns": {"type": "integer", "minimum": 1},
+        "model": {"type": "string"},
+        "allow_tools": {"type": "array", "items": {"type": "string"}},
+        "tools": {"type": ["string", "array"]},
+        "budget": {"$ref": "#/$defs/budget"}
+      }
+    },
+    "tests": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/test"}}
+  },
+  "$defs": {
+    "budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_cost_usd": {"type": "number", "minimum": 0},
+        "max_total_tokens": {"type": "integer", "minimum": 0},
+        "max_output_tokens": {"type": "integer", "minimum": 0},
+        "max_tool_calls": {"type": "integer", "minimum": 0},
+        "max_turns": {"type": "integer", "minimum": 0},
+        "max_duration_s": {"type": "number", "minimum": 0}
+      }
+    },
+    "fixture": {
+      "oneOf": [
+        {"type": "string"},
+        {"type": "object", "required": ["src"], "additionalProperties": false,
+         "properties": {"src": {"type": "string"}, "dest": {"type": "string"}}}
+      ]
+    },
+    "toolPatterns": {"oneOf": [{"type": "string"}, {"type": "array", "items": {"type": "string"}}]},
+    "grader": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": {"enum": ["file_exists", "file_absent", "file_contains", "file_hash", "output_contains",
+                          "output_regex", "json_schema", "command", "python", "trace", "budget", "llm_rubric"]},
+        "path": {"type": "string"},
+        "text": {"type": "string"},
+        "pattern": {"type": "string"},
+        "negate": {"type": "boolean"},
+        "ignore_case": {"type": "boolean"},
+        "sha256": {"type": "string"},
+        "schema": {"type": ["object", "string"]},
+        "run": {"type": "string"},
+        "entrypoint": {"type": "string"},
+        "args": {"type": "array"},
+        "timeout_s": {"type": "number"},
+        "must_load_skill": {"$ref": "#/$defs/toolPatterns"},
+        "must_not_load_skill": {"$ref": "#/$defs/toolPatterns"},
+        "max_tool_calls": {"type": "integer"},
+        "min_tool_calls": {"type": "integer"},
+        "forbidden_tools": {"$ref": "#/$defs/toolPatterns"},
+        "required_tools": {"$ref": "#/$defs/toolPatterns"},
+        "tool_order": {"type": "array", "items": {"type": "string"}},
+        "must_read": {"$ref": "#/$defs/toolPatterns"},
+        "max_turns": {"type": "integer"},
+        "no_permission_denials": {"type": "boolean"},
+        "count_skill_md_reads": {"type": "boolean"},
+        "rubric": {"type": "string"},
+        "judge": {"$ref": "#/$defs/toolPatterns"},
+        "pass_threshold": {"type": "number", "minimum": 0, "maximum": 1},
+        "include_files": {"type": "array", "items": {"type": "string"}}
+      },
+      "allOf": [
+        {"if": {"properties": {"type": {"const": "file_exists"}}}, "then": {"required": ["path"]}},
+        {"if": {"properties": {"type": {"const": "file_absent"}}}, "then": {"required": ["path"]}},
+        {"if": {"properties": {"type": {"const": "file_contains"}}}, "then": {"required": ["path"], "anyOf": [{"required": ["text"]}, {"required": ["pattern"]}]}},
+        {"if": {"properties": {"type": {"const": "file_hash"}}}, "then": {"required": ["path", "sha256"]}},
+        {"if": {"properties": {"type": {"const": "output_contains"}}}, "then": {"required": ["text"]}},
+        {"if": {"properties": {"type": {"const": "output_regex"}}}, "then": {"required": ["pattern"]}},
+        {"if": {"properties": {"type": {"const": "json_schema"}}}, "then": {"required": ["path", "schema"]}},
+        {"if": {"properties": {"type": {"const": "command"}}}, "then": {"required": ["run"]}},
+        {"if": {"properties": {"type": {"const": "python"}}}, "then": {"required": ["entrypoint"]}},
+        {"if": {"properties": {"type": {"const": "llm_rubric"}}}, "then": {"required": ["rubric"]}}
+      ]
+    },
+    "test": {
+      "type": "object",
+      "required": ["id", "kind", "prompt"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {"type": "string", "pattern": "^[A-Za-z0-9_.-]+$"},
+        "kind": {"enum": ["trigger", "behavior", "adversarial", "interaction", "budget"]},
+        "prompt": {"type": "string", "minLength": 1},
+        "description": {"type": "string"},
+        "notes": {"type": "string"},
+        "tags": {"type": "array", "items": {"type": "string"}},
+        "fixtures": {"type": "array", "items": {"$ref": "#/$defs/fixture"}},
+        "setup": {"$ref": "#/$defs/toolPatterns"},
+        "graders": {"type": "array", "items": {"$ref": "#/$defs/grader"}},
+        "trials": {"type": "integer", "minimum": 1},
+        "timeout_s": {"type": "number", "exclusiveMinimum": 0},
+        "max_turns": {"type": "integer", "minimum": 1},
+        "model": {"type": "string"},
+        "expect_trigger": {"type": "boolean"},
+        "skill": {"type": "string"},
+        "skills": {"type": "array", "items": {"type": "string"}},
+        "expect_skill": {"type": ["string", "null"]},
+        "exclusive": {"type": "boolean"},
+        "budget": {"$ref": "#/$defs/budget"},
+        "critical": {"type": "boolean"},
+        "quarantine": {"type": "boolean"},
+        "quarantine_reason": {"type": "string"},
+        "reviewed": {"type": "boolean"},
+        "matrix": {"oneOf": [
+          {"type": "object", "additionalProperties": {"type": "array"}},
+          {"type": "array", "items": {"type": "object"}}
+        ]},
+        "allow_tools": {"type": "array", "items": {"type": "string"}},
+        "tools": {"type": ["string", "array"]}
+      },
+      "allOf": [
+        {"if": {"properties": {"kind": {"const": "trigger"}}}, "then": {"required": ["expect_trigger"]}},
+        {"if": {"properties": {"kind": {"const": "interaction"}}}, "then": {"required": ["expect_skill"]}},
+        {"if": {"properties": {"kind": {"enum": ["behavior", "adversarial"]}}}, "then": {"required": ["graders"]}},
+        {"if": {"properties": {"kind": {"const": "budget"}}}, "then": {"required": ["budget"]}}
+      ]
+    }
+  }
+}

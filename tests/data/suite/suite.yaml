@@ -1,0 +1,31 @@
+spec_version: 1
+suite: demo
+skills: [../demo-skill]
+defaults: {trials: 6, timeout_s: 30}
+tests:
+  - id: trig-yes
+    kind: trigger
+    expect_trigger: true
+    critical: true
+    prompt: make a demo report please
+  - id: trig-no
+    kind: trigger
+    expect_trigger: false
+    prompt: what is two plus two
+  - id: writes-report
+    kind: behavior
+    critical: true
+    prompt: create a demo report and save it to out/report.txt
+    graders:
+      - {type: trace, must_load_skill: demo-skill, max_tool_calls: 5}
+      - {type: file_contains, path: out/report.txt, text: ok}
+      - {type: command, run: "test -s out/report.txt"}
+  - id: judged
+    kind: behavior
+    prompt: create a demo report and save it to r.txt
+    graders:
+      - {type: llm_rubric, rubric: rubric.md, judge: fakejudge, include_files: [r.txt]}
+  - id: budgeted
+    kind: budget
+    prompt: demo report to b.txt
+    budget: {max_cost_usd: 0.05, max_tool_calls: 5}
